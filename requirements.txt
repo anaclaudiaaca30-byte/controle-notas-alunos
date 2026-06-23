@@ -2,3 +2,8 @@ customtkinter
 pandas
 openpyxl
 pillow
+fastapi
+uvicorn
+qrcode
+python-multipart
+jinja2
