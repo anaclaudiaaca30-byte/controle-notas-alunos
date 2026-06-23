@@ -1,52 +1,64 @@
-from fastapi import FastAPI, Request, UploadFile, File
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-import shutil
-import qrcode
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Sistema de Correção de Notas</title>
+</head>
+<body>
 
-app = FastAPI()
+    <h1>Sistema de Correção de Notas</h1>
 
-# Pasta de arquivos estáticos
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    <h2>Cadastro do Aluno</h2>
 
-templates = Jinja2Templates(directory="templates")
+    <label>Nome do aluno:</label><br>
+    <input type="text" id="nome"><br><br>
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+    <label>Turma:</label><br>
+    <input type="text" id="turma"><br><br>
 
-    # Cria o QR Code
-    qr = qrcode.make("http://127.0.0.1:8000/upload")
-    qr.save("uploads/qrcode.png")
+    <label>Total de atividades propostas:</label><br>
+    <input type="number" id="total"><br><br>
 
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "qr_code": "/uploads/qrcode.png"
+    <label>Atividades realizadas:</label><br>
+    <input type="number" id="realizadas"><br><br>
+
+    <button onclick="calcularMedia()">Calcular média</button>
+
+    <h2 id="resultado">Média: 0.00</h2>
+    <h2 id="situacao">Situação:</h2>
+
+    <hr>
+
+    <p>Escaneie o QR Code para enviar foto da atividade:</p>
+    <img src="{{ qr_code }}" alt="QR Code" width="200">
+
+    <br><br>
+    <a href="/upload">Abrir página de envio</a>
+
+    <script>
+        function calcularMedia() {
+            let total = Number(document.getElementById("total").value);
+            let realizadas = Number(document.getElementById("realizadas").value);
+
+            if (total <= 0) {
+                alert("Digite o total de atividades propostas.");
+                return;
+            }
+
+            let media = (realizadas / total) * 10;
+
+            document.getElementById("resultado").innerText =
+                "Média: " + media.toFixed(2);
+
+            if (media < 6) {
+                document.getElementById("situacao").innerText =
+                    "Situação: média insuficiente. O aluno precisa fazer compensação de falta.";
+            } else {
+                document.getElementById("situacao").innerText =
+                    "Situação: média suficiente. O aluno não precisa de compensação.";
+            }
         }
-    )
+    </script>
 
-@app.get("/upload", response_class=HTMLResponse)
-async def upload_page():
-    return """
-    <h2>Enviar Foto da Atividade</h2>
-
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="arquivo">
-        <button type="submit">Enviar</button>
-    </form>
-    """
-
-@app.post("/upload")
-async def upload_file(arquivo: UploadFile = File(...)):
-
-    caminho = f"uploads/{arquivo.filename}"
-
-    with open(caminho, "wb") as buffer:
-        shutil.copyfileobj(arquivo.file, buffer)
-
-    return {
-        "mensagem": "Foto recebida com sucesso!",
-        "arquivo": arquivo.filename
-    }
+</body>
+</html>
