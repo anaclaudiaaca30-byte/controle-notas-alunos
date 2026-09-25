@@ -286,54 +286,89 @@ def tela_provas():
 
 def corrigir_atividade_com_ia(caminho_imagem):
     try:
-        # Abre a imagem com PIL
-        imagem_pil = Image.open(caminho_imagem).convert("RGB")
+        import base64
+        import os
+        from openai import OpenAI
 
-        # Converte para NumPy
-        imagem = np.array(imagem_pil)
+        # Verifica se a imagem existe
+        if not os.path.exists(caminho_imagem):
+            return "Erro: imagem não encontrada."
 
-        # Aumenta a imagem
-        imagem = cv2.resize(
-            imagem,
-            None,
-            fx=3,
-            fy=3,
-            interpolation=cv2.INTER_CUBIC
+        # Busca a chave da OpenAI nas variáveis do Windows
+        chave = os.getenv("OPENAI_API_KEY")
+
+        if not chave:
+            return (
+                "A chave OPENAI_API_KEY não foi encontrada.\n"
+                "Configure a chave da OpenAI antes de usar a correção com IA."
+            )
+
+        cliente = OpenAI(api_key=chave)
+
+        # Converte a imagem para Base64
+        with open(caminho_imagem, "rb") as arquivo:
+            imagem_base64 = base64.b64encode(
+                arquivo.read()
+            ).decode("utf-8")
+
+        # Envia a atividade para análise
+        resposta = cliente.responses.create(
+            model="gpt-5.6-luna",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": """
+Analise cuidadosamente esta atividade escolar.
+
+Sua tarefa é:
+
+1. Ler todo o texto visível da atividade.
+2. Identificar as questões.
+3. Identificar as respostas dadas pelo aluno.
+4. Não inventar palavras que não estejam legíveis.
+5. Quando alguma parte não puder ser lida,
+   informe [ilegível].
+6. Organizar o resultado por questão.
+
+Ainda não atribua nota.
+
+Apresente no formato:
+
+QUESTÃO 1:
+Enunciado:
+Resposta do aluno:
+
+QUESTÃO 2:
+Enunciado:
+Resposta do aluno:
+
+Continue dessa maneira para todas as questões
+que conseguir identificar.
+"""
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url":
+                                f"data:image/jpeg;base64,{imagem_base64}"
+                        }
+                    ]
+                }
+            ]
         )
 
-        # Converte para tons de cinza
-        cinza = cv2.cvtColor(
-            imagem,
-            cv2.COLOR_RGB2GRAY
-        )
+        resultado = resposta.output_text
 
-        # Cria o leitor OCR
-        leitor = easyocr.Reader(
-            ["pt"],
-            gpu=False
-        )
+        if not resultado:
+            return "A IA não conseguiu identificar o conteúdo da atividade."
 
-        # Faz a leitura
-        resultados = leitor.readtext(
-            cinza,
-            detail=0,
-            paragraph=False,
-            text_threshold=0.5,
-            low_text=0.3
-        )
-
-        if not resultados:
-            return "Nenhum texto foi identificado na atividade."
-
-        # Junta os textos encontrados
-        texto_extraido = "\n".join(resultados)
-
-        return texto_extraido
+        return resultado
 
     except Exception as erro:
         traceback.print_exc()
-        return f"Erro ao realizar a leitura: {erro}"
-
+        return f"Erro ao analisar a atividade com IA: {erro}"       
 
 def tela_captura_atividade():
     limpar_principal()
