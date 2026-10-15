@@ -4,7 +4,8 @@ from tkinter import ttk
 from tkinter import filedialog
 from datetime import datetime
 import sqlite3
-from PIL import Image, ImageTk
+import re
+from PIL import Image, ImageOps, ImageTk
 import cv2
 import os
 import easyocr
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS atividades (
     aluno TEXT,
     disciplina TEXT,
     tipo_atividade TEXT,
+    prova_id INTEGER,
     caminho_imagem TEXT,
     resultado TEXT,
     nota REAL,
@@ -92,6 +94,12 @@ CREATE TABLE IF NOT EXISTS provas (
     data_criacao TEXT
 )
 """)
+
+colunas_atividades = {
+    coluna[1] for coluna in cursor.execute("PRAGMA table_info(atividades)").fetchall()
+}
+if "prova_id" not in colunas_atividades:
+    cursor.execute("ALTER TABLE atividades ADD COLUMN prova_id INTEGER")
 
 conexao.commit()
 
@@ -284,7 +292,7 @@ def tela_provas():
     ctk.CTkButton(botoes, text="💡 Gerar sugestões", width=220, command=gerar_sugestoes).pack(side="left", padx=10)
     ctk.CTkButton(botoes, text="💾 Salvar prova", width=220, fg_color=COR_AZUL, command=salvar_prova).pack(side="left", padx=10)
 
-def corrigir_atividade_com_ia(caminho_imagem):
+def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
     try:
         import base64
         import os
@@ -305,13 +313,44 @@ def corrigir_atividade_com_ia(caminho_imagem):
 
         cliente = OpenAI(api_key=chave)
 
-        # Converte a imagem para Base64
+        imagem = Image.open(caminho_imagem)
+        mime_por_formato = {
+            "JPEG": "image/jpeg",
+            "PNG": "image/png",
+            "WEBP": "image/webp",
+        }
+        mime_type = mime_por_formato.get(imagem.format)
+        if mime_type is None:
+            return f"Formato de imagem não suportado: {imagem.format or 'desconhecido'}."
+
         with open(caminho_imagem, "rb") as arquivo:
             imagem_base64 = base64.b64encode(
                 arquivo.read()
             ).decode("utf-8")
 
-        # Envia a atividade para análise
+        if gabarito:
+            instrucoes = f"""
+    Leia a atividade e compare as respostas do aluno com o gabarito abaixo.
+    GABARITO: {gabarito}
+
+    Para cada questão, transcreva a resposta do aluno, compare-a com o gabarito
+    e explique brevemente o resultado. Considere as questões objetivas com pesos
+    iguais e calcule uma sugestão de nota de 0 a 10 somente se todas as respostas
+    e o gabarito estiverem legíveis e puderem ser comparados sem ambiguidade.
+    Se houver resposta aberta, ilegível, questão faltando ou dúvida, escreva
+    "NOTA SUGERIDA: REVISÃO MANUAL" e explique o motivo. Não invente respostas.
+    Em qualquer caso, a nota é apenas uma sugestão para revisão do professor.
+
+    Finalize sempre com exatamente uma linha neste formato:
+    NOTA SUGERIDA: <valor de 0 a 10 ou REVISÃO MANUAL>
+    """
+        else:
+            instrucoes = """
+    Leia todo o texto visível, identifique as questões e transcreva as respostas
+    do aluno. Não atribua nota sem um gabarito associado. Não invente texto;
+    marque trechos ilegíveis como [ilegível]. Organize por questão.
+    """
+
         resposta = cliente.responses.create(
             model="gpt-5.6-luna",
             input=[
@@ -320,39 +359,11 @@ def corrigir_atividade_com_ia(caminho_imagem):
                     "content": [
                         {
                             "type": "input_text",
-                            "text": """
-Analise cuidadosamente esta atividade escolar.
-
-Sua tarefa é:
-
-1. Ler todo o texto visível da atividade.
-2. Identificar as questões.
-3. Identificar as respostas dadas pelo aluno.
-4. Não inventar palavras que não estejam legíveis.
-5. Quando alguma parte não puder ser lida,
-   informe [ilegível].
-6. Organizar o resultado por questão.
-
-Ainda não atribua nota.
-
-Apresente no formato:
-
-QUESTÃO 1:
-Enunciado:
-Resposta do aluno:
-
-QUESTÃO 2:
-Enunciado:
-Resposta do aluno:
-
-Continue dessa maneira para todas as questões
-que conseguir identificar.
-"""
+                            "text": instrucoes
                         },
                         {
                             "type": "input_image",
-                            "image_url":
-                                f"data:image/jpeg;base64,{imagem_base64}"
+                            "image_url": f"data:{mime_type};base64,{imagem_base64}"
                         }
                     ]
                 }
@@ -396,6 +407,27 @@ def tela_captura_atividade():
     entrada_tipo = ctk.CTkEntry(form, placeholder_text="Tipo de atividade", width=260, height=40)
     entrada_tipo.grid(row=0, column=2, padx=10, pady=10)
 
+    cursor.execute("""
+        SELECT id, nome_prova, disciplina, gabarito
+        FROM provas
+        ORDER BY id DESC
+    """)
+    provas_disponiveis = cursor.fetchall()
+    prova_sem_gabarito = "Sem prova / sem gabarito"
+    provas_por_opcao = {
+        f"{prova_id} - {nome} - {disciplina}": (prova_id, gabarito)
+        for prova_id, nome, disciplina, gabarito in provas_disponiveis
+    }
+    opcoes_provas = [prova_sem_gabarito, *provas_por_opcao]
+    seletor_prova = ctk.CTkComboBox(
+        form,
+        values=opcoes_provas,
+        width=500,
+        height=40
+    )
+    seletor_prova.set(prova_sem_gabarito)
+    seletor_prova.grid(row=1, column=0, columnspan=3, padx=10, pady=10, sticky="w")
+
     frame_label = ctk.CTkLabel(
         card,
         text="Câmera desligada",
@@ -433,7 +465,7 @@ def tela_captura_atividade():
         if ret:
             camera_state["frame"] = frame
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            imagem_pil = Image.fromarray(frame_rgb).resize((880, 300))
+            imagem_pil = ImageOps.contain(Image.fromarray(frame_rgb), (880, 300))
             foto = ImageTk.PhotoImage(imagem_pil)
             frame_label.configure(image=foto, text="")
             frame_label.image = foto
@@ -443,6 +475,14 @@ def tela_captura_atividade():
     def iniciar_camera():
         if camera_state["cap"] is None:
             camera_state["cap"] = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            if not camera_state["cap"].isOpened():
+                camera_state["cap"].release()
+                camera_state["cap"] = None
+                messagebox.showerror("Erro", "Não foi possível acessar a câmera.")
+                return
+            camera_state["cap"].set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            camera_state["cap"].set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        camera_state["frame"] = None
         camera_state["running"] = True
         atualizar_camera()
 
@@ -451,25 +491,18 @@ def tela_captura_atividade():
         if camera_state["cap"] is not None:
             camera_state["cap"].release()
             camera_state["cap"] = None
+        camera_state["frame"] = None
         frame_label.configure(text="Câmera desligada", image="")
         frame_label.image = None
 
-    def tirar_foto():
-        if camera_state["frame"] is None:
-            messagebox.showwarning("Atenção", "Abra a câmera primeiro.")
-            return
-
+    def registrar_atividade(caminho):
         aluno = entrada_aluno.get().strip() or "Sem nome"
         disciplina = entrada_disciplina.get().strip() or "Sem disciplina"
         tipo_atividade = entrada_tipo.get().strip() or "Sem tipo"
+        opcao_prova = seletor_prova.get()
+        prova_id, gabarito = provas_por_opcao.get(opcao_prova, (None, ""))
 
-        os.makedirs("atividades", exist_ok=True)
-        nome_arquivo = datetime.now().strftime("atividade_%Y%m%d_%H%M%S.jpg")
-        caminho = os.path.join("atividades", nome_arquivo)
-        cv2.imwrite(caminho, camera_state["frame"])
-        parar_camera()
-
-        resultado = corrigir_atividade_com_ia(caminho)
+        resultado = corrigir_atividade_com_ia(caminho, gabarito)
         data_captura = datetime.now().strftime("%d/%m/%Y %H:%M")
 
         cursor.execute("""
@@ -477,26 +510,48 @@ def tela_captura_atividade():
                 aluno,
                 disciplina,
                 tipo_atividade,
+                prova_id,
                 caminho_imagem,
                 resultado,
                 nota,
                 status,
                 data_captura
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             aluno,
             disciplina,
             tipo_atividade,
+            prova_id,
             caminho,
             resultado,
             None,
-            "capturada",
+            "aguardando revisão" if gabarito else "capturada",
             data_captura
         ))
         conexao.commit()
 
         resultado_ia.configure(text=resultado)
         messagebox.showinfo("Atividade salva", "Atividade registrada no banco de dados.")
+
+    def tirar_foto():
+        if camera_state["frame"] is None:
+            messagebox.showwarning("Atenção", "Abra a câmera primeiro.")
+            return
+
+        os.makedirs("atividades", exist_ok=True)
+        nome_arquivo = datetime.now().strftime("atividade_%Y%m%d_%H%M%S_%f.jpg")
+        caminho = os.path.join("atividades", nome_arquivo)
+        imagem_salva = cv2.imwrite(
+            caminho,
+            camera_state["frame"],
+            [cv2.IMWRITE_JPEG_QUALITY, 95]
+        )
+        if not imagem_salva:
+            messagebox.showerror("Erro", "Não foi possível salvar a foto capturada.")
+            return
+        parar_camera()
+        registrar_atividade(caminho)
+
     def selecionar_foto():
         caminho = filedialog.askopenfilename(
             title="Selecionar foto da atividade",
@@ -518,8 +573,7 @@ def tela_captura_atividade():
             frame_label.configure(image=foto, text="")
             frame_label.image = foto
 
-            resultado = corrigir_atividade_com_ia(caminho)
-            resultado_ia.configure(text=resultado)
+            registrar_atividade(caminho)
 
         except Exception as erro:
             messagebox.showerror(
@@ -720,7 +774,7 @@ def tela_correcao():
             id_atividade = int(escolha.split(" - ")[0])
 
             cursor.execute("""
-                SELECT caminho_imagem
+                SELECT caminho_imagem, resultado, nota
                 FROM atividades
                 WHERE id = ?
             """, (id_atividade,))
@@ -734,7 +788,7 @@ def tela_correcao():
                 )
                 return
 
-            caminho = registro[0]
+            caminho, resultado_salvo, nota_salva = registro
 
             if not os.path.exists(caminho):
                 messagebox.showerror(
@@ -758,6 +812,20 @@ def tela_correcao():
             )
 
             imagem_label.image = foto
+            entrada_resultado.delete("1.0", "end")
+            entrada_resultado.insert("1.0", resultado_salvo or "")
+
+            nota_sugerida = re.search(
+                r"NOTA SUGERIDA:\s*(\d+(?:[.,]\d+)?)",
+                resultado_salvo or "",
+                re.IGNORECASE
+            )
+            valor_nota = nota_salva
+            if valor_nota is None and nota_sugerida:
+                valor_nota = nota_sugerida.group(1).replace(",", ".")
+            entrada_nota.delete(0, "end")
+            if valor_nota is not None:
+                entrada_nota.insert(0, str(valor_nota))
 
         except Exception as erro:
 
@@ -788,16 +856,16 @@ def tela_correcao():
         pady=15
     )
 
-    entrada_resultado = ctk.CTkEntry(
+    entrada_resultado = ctk.CTkTextbox(
         frame_correcao,
-        placeholder_text="Observação / resultado da correção",
-        width=500,
-        height=40
+        width=650,
+        height=140
     )
 
     entrada_resultado.grid(
         row=0,
         column=0,
+        columnspan=2,
         padx=10,
         pady=10
     )
@@ -829,7 +897,7 @@ def tela_correcao():
             )
             return
 
-        resultado = entrada_resultado.get().strip()
+        resultado = entrada_resultado.get("1.0", "end-1c").strip()
 
         try:
             nota = float(
