@@ -292,19 +292,17 @@ def tela_provas():
     ctk.CTkButton(botoes, text="💡 Gerar sugestões", width=220, command=gerar_sugestoes).pack(side="left", padx=10)
     ctk.CTkButton(botoes, text="💾 Salvar prova", width=220, fg_color=COR_AZUL, command=salvar_prova).pack(side="left", padx=10)
 
+
 def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
     try:
         import base64
         import os
         from openai import OpenAI
 
-        # Verifica se a imagem existe
         if not os.path.exists(caminho_imagem):
             return "Erro: imagem não encontrada."
 
-        # Busca a chave da OpenAI nas variáveis do Windows
         chave = os.getenv("OPENAI_API_KEY")
-
         if not chave:
             return (
                 "A chave OPENAI_API_KEY não foi encontrada.\n"
@@ -313,54 +311,54 @@ def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
 
         cliente = OpenAI(api_key=chave)
 
-        imagem = Image.open(caminho_imagem)
+        imagem = Image.open(caminho_imagem).convert("RGB")
         mime_por_formato = {
             "JPEG": "image/jpeg",
             "PNG": "image/png",
             "WEBP": "image/webp",
         }
-        mime_type = mime_por_formato.get(imagem.format)
-        if mime_type is None:
-            return f"Formato de imagem não suportado: {imagem.format or 'desconhecido'}."
+        mime_type = mime_por_formato.get(imagem.format, "image/jpeg")
 
         with open(caminho_imagem, "rb") as arquivo:
-            imagem_base64 = base64.b64encode(
-                arquivo.read()
-            ).decode("utf-8")
+            imagem_base64 = base64.b64encode(arquivo.read()).decode("utf-8")
 
         if gabarito:
             instrucoes = f"""
-    Leia a atividade e compare as respostas do aluno com o gabarito abaixo.
-    GABARITO: {gabarito}
+            Você é um assistente de correção de atividades escolares.
 
-    Para cada questão, transcreva a resposta do aluno, compare-a com o gabarito
-    e explique brevemente o resultado. Considere as questões objetivas com pesos
-    iguais e calcule uma sugestão de nota de 0 a 10 somente se todas as respostas
-    e o gabarito estiverem legíveis e puderem ser comparados sem ambiguidade.
-    Se houver resposta aberta, ilegível, questão faltando ou dúvida, escreva
-    "NOTA SUGERIDA: REVISÃO MANUAL" e explique o motivo. Não invente respostas.
-    Em qualquer caso, a nota é apenas uma sugestão para revisão do professor.
+            Analise a imagem da atividade do aluno.
+            Sua tarefa:
+            1. Leia todas as questões e respostas visíveis.
+            2. Identifique cada resposta do aluno.
+            3. Compare com o gabarito abaixo.
+            4. Explique se cada resposta está correta, parcialmente correta ou errada.
+            5. Se alguma parte estiver ilegível, marque como [ilegível].
+            6. Se houver dúvida, diga que exige revisão manual.
+            7. Não invente respostas.
+            8. Finalize sempre com uma linha exata:
+               NOTA SUGERIDA: <valor de 0 a 10 ou REVISÃO MANUAL>
 
-    Finalize sempre com exatamente uma linha neste formato:
-    NOTA SUGERIDA: <valor de 0 a 10 ou REVISÃO MANUAL>
-    """
+            GABARITO:
+            {gabarito}
+            """
         else:
             instrucoes = """
-    Leia todo o texto visível, identifique as questões e transcreva as respostas
-    do aluno. Não atribua nota sem um gabarito associado. Não invente texto;
-    marque trechos ilegíveis como [ilegível]. Organize por questão.
-    """
+            Você é um assistente de leitura de atividades escolares.
+
+            Leia todo o texto visível da imagem.
+            Organize as respostas por questão.
+            Marque trechos ilegíveis como [ilegível].
+            Não invente texto.
+            Não atribua nota sem gabarito.
+            """
 
         resposta = cliente.responses.create(
-            model="gpt-5.6-luna",
+            model="gpt-4o-mini",
             input=[
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "input_text",
-                            "text": instrucoes
-                        },
+                        {"type": "input_text", "text": instrucoes},
                         {
                             "type": "input_image",
                             "image_url": f"data:{mime_type};base64,{imagem_base64}"
@@ -371,7 +369,6 @@ def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
         )
 
         resultado = resposta.output_text
-
         if not resultado:
             return "A IA não conseguiu identificar o conteúdo da atividade."
 
@@ -379,7 +376,8 @@ def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
 
     except Exception as erro:
         traceback.print_exc()
-        return f"Erro ao analisar a atividade com IA: {erro}"       
+        return f"Erro ao analisar a atividade com IA: {erro}"
+
 
 def tela_captura_atividade():
     limpar_principal()
@@ -678,6 +676,7 @@ def tela_atividades():
         width=260,
         command=abrir_imagem
     ).pack(padx=30, pady=(0, 20), anchor="w")
+
 def tela_correcao():
     limpar_principal()
 
@@ -940,6 +939,7 @@ def tela_correcao():
         font=("Arial", 15, "bold"),
         command=salvar_correcao
     ).pack(pady=10)
+
 
 def tela_resultados():
     limpar_principal()
