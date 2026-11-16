@@ -11,6 +11,7 @@ import os
 import easyocr
 import traceback
 import numpy as np
+import io
 
 # =========================
 # CONFIGURAÇÃO DA JANELA
@@ -296,7 +297,6 @@ def tela_provas():
 def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
     try:
         import base64
-        import os
         from openai import OpenAI
 
         if not os.path.exists(caminho_imagem):
@@ -311,16 +311,13 @@ def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
 
         cliente = OpenAI(api_key=chave)
 
-        imagem = Image.open(caminho_imagem).convert("RGB")
-        mime_por_formato = {
-            "JPEG": "image/jpeg",
-            "PNG": "image/png",
-            "WEBP": "image/webp",
-        }
-        mime_type = mime_por_formato.get(imagem.format, "image/jpeg")
+        with Image.open(caminho_imagem) as imagem:
+            imagem = imagem.convert("RGB")
+            buffer = io.BytesIO()
+            imagem.save(buffer, format="PNG")
+            imagem_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        with open(caminho_imagem, "rb") as arquivo:
-            imagem_base64 = base64.b64encode(arquivo.read()).decode("utf-8")
+        data_url = f"data:image/png;base64,{imagem_base64}"
 
         if gabarito:
             instrucoes = f"""
@@ -352,27 +349,29 @@ def corrigir_atividade_com_ia(caminho_imagem, gabarito=""):
             Não atribua nota sem gabarito.
             """
 
-        resposta = cliente.responses.create(
+        resposta = cliente.chat.completions.create(
             model="gpt-4o-mini",
-            input=[
+            messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "input_text", "text": instrucoes},
+                        {"type": "text", "text": instrucoes},
                         {
-                            "type": "input_image",
-                            "image_url": f"data:{mime_type};base64,{imagem_base64}"
+                            "type": "image_url",
+                            "image_url": {"url": data_url}
                         }
                     ]
                 }
-            ]
+            ],
+            temperature=0.2,
+            max_tokens=800,
         )
 
-        resultado = resposta.output_text
+        resultado = resposta.choices[0].message.content
         if not resultado:
             return "A IA não conseguiu identificar o conteúdo da atividade."
 
-        return resultado
+        return resultado.strip()
 
     except Exception as erro:
         traceback.print_exc()
@@ -1227,3 +1226,4 @@ principal.pack(side="right", fill="both", expand=True)
 tela_captura_atividade()
 
 app.mainloop()
+
