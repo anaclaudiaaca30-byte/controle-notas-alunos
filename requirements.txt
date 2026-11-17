@@ -2,6 +2,10 @@ customtkinter
 pandas
 openpyxl
 pillow
+opencv-python
+numpy
+easyocr
+openai
 fastapi
 uvicorn
 qrcode

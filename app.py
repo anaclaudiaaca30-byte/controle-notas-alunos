@@ -1229,3 +1229,4 @@ principal.pack(side="right", fill="both", expand=True)
 tela_captura_atividade()
 
 app.mainloop()
+
